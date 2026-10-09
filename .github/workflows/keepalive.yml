@@ -1,0 +1,37 @@
+name: 自动保活
+
+on:
+  schedule:
+    # 每周一 UTC 00:00 执行一次检查
+    - cron: '0 0 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  keepalive:
+    name: 保持仓库活跃
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 检出代码
+        uses: actions/checkout@v5
+
+      - name: 🔄 检查提交间隔并按需保活
+        run: |
+          set -eu
+          last_commit_ts=$(git log -1 --format=%ct)
+          now_ts=$(date +%s)
+          days=$(( (now_ts - last_commit_ts) / 86400 ))
+          echo "距离上次提交已过去 ${days} 天"
+
+          # 超过 45 天无提交则自动推送空提交，重置 GitHub 60 天无活动倒计时
+          if [ "$days" -ge 45 ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit --allow-empty -m "chore: 保持仓库活动 [skip ci]"
+            git push origin "HEAD:${{ github.ref_name }}"
+            echo "已成功推送保活提交"
+          else
+            echo "仓库活跃度正常，无需保活"
+          fi
