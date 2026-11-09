@@ -80,12 +80,15 @@ class Application:
 				used = None
 				balance_changed = None
 				error = None
+				auth_failed = False
 
 				if success:
 					success_count += 1
 				else:
 					# 记录有失败账号
 					has_any_failed = True
+					# 判定是否为登录凭据失效（HTTP 401）
+					auth_failed = bool(user_info and user_info.get('auth_failed'))
 					logger.notify('失败，将发送通知', safe_account_name)
 
 				# 收集余额数据和处理结果
@@ -132,6 +135,10 @@ class Application:
 					balance_changed = None
 					error = user_info.get('error', '未知错误')
 
+				# 签到失败时补齐错误原因（例如获取用户信息成功但签到接口返回 401）
+				if not success and not error:
+					error = (user_info or {}).get('error') or '签到失败'
+
 				# 一次性创建账号结果（通知使用完整名称）
 				account_result = AccountResult(
 					name=full_account_name,
@@ -140,6 +147,7 @@ class Application:
 					used=used,
 					balance_changed=balance_changed,
 					error=error,
+					auth_failed=auth_failed,
 				)
 
 				# 所有账号都添加到结果列表
@@ -232,9 +240,8 @@ class Application:
 				timezone=timezone_abbr,
 			)
 
-			# 发送通知
+			# 发送通知（实际发送渠道数量由 NotificationKit 内部记录，避免无渠道时误报「已发送」）
 			await self.notification_kit.push_message(notification_data)
-			logger.notify('通知已发送')
 		elif not account_results:
 			logger.info('没有账号数据，跳过通知')
 
@@ -256,6 +263,7 @@ class Application:
 					quota=result.quota,
 					used=result.used,
 					error=result.error,
+					auth_failed=result.auth_failed,
 				)
 			)
 

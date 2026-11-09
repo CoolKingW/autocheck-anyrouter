@@ -12,6 +12,7 @@ def build_account_result(
 	used: float | None = None,
 	balance_changed: bool | None = None,
 	error: str | None = None,
+	auth_failed: bool = False,
 ) -> AccountResult:
 	"""
 	构建账号结果数据
@@ -23,6 +24,7 @@ def build_account_result(
 		used: 已使用额度
 		balance_changed: 余额是否变化
 		error: 错误信息
+		auth_failed: 是否因登录凭据失效失败
 
 	Returns:
 		AccountResult 对象
@@ -34,6 +36,7 @@ def build_account_result(
 		used=used if status == 'success' and used is not None else (5.0 if status == 'success' else None),
 		balance_changed=balance_changed,
 		error=error,
+		auth_failed=auth_failed,
 	)
 
 

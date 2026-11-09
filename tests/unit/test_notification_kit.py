@@ -231,3 +231,23 @@ class TestNotificationKit:
 		for flag_name, expected_value in expected_flags.items():
 			actual_value = context.get(flag_name)
 			assert actual_value == expected_value, f'{flag_name} 应该是 {expected_value}, 实际是 {actual_value}'
+
+	@pytest.mark.asyncio
+	async def test_no_handlers_does_not_log_notification_sent(
+		self,
+		clean_notification_env: None,
+		capsys: pytest.CaptureFixture[str],
+	) -> None:
+		"""没有可用渠道时不误报「通知已发送」，并返回 0"""
+		# clean_notification_env fixture 用于清理环境变量，无需在函数体内显式使用
+		kit = NotificationKit()
+		data = build_notification_data([
+			build_account_result(name='账号 1', status='failed', error='获取用户信息失败：HTTP 401'),
+		])
+
+		sent_count = await kit.push_message(data)
+
+		output = capsys.readouterr().out
+		assert sent_count == 0, '没有可用渠道时应该返回 0'
+		assert '没有可用的通知处理器' in output
+		assert '通知已发送' not in output

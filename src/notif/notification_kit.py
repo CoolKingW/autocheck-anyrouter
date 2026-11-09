@@ -47,36 +47,52 @@ class NotificationKit:
 		# 注册所有通知处理器
 		self._handlers = self._register_handlers()
 
-	async def push_message(self, content: NotificationData):
+	async def push_message(self, content: NotificationData) -> int:
 		"""
 		发送通知消息
 
 		Args:
 			content: 通知数据
+
+		Returns:
+			int: 成功发送的渠道数量，0 表示没有渠道真正发出
 		"""
 		# 检查是否有可用的通知处理器
 		if not self._handlers:
 			logger.warning('没有可用的通知处理器，跳过通知提醒')
-			return
+			return 0
 
 		# 构建上下文数据
 		context_data = self._build_context_data(content)
 
 		# 向所有可用的 handler 发送通知
+		sent_count = 0
 		for handler in self._handlers:
 			if handler.is_available():
-				await self._send_to_handler(
+				if await self._send_to_handler(
 					handler=handler,
 					context_data=context_data,
-				)
+				):
+					sent_count += 1
 
-	async def _send_to_handler(self, handler: NotificationHandler, context_data: dict):
+		# 只有真的发出去才算「通知已发送」，避免没有任何渠道时误报
+		if sent_count > 0:
+			logger.notify(f'通知已发送（{sent_count} 个渠道）')
+		else:
+			logger.warning('没有渠道成功发送通知，请检查通知配置')
+
+		return sent_count
+
+	async def _send_to_handler(self, handler: NotificationHandler, context_data: dict) -> bool:
 		"""
 		向单个 handler 发送通知
 
 		Args:
 			handler: 通知处理器
 			context_data: 模板渲染的上下文数据
+
+		Returns:
+			bool: 是否发送成功
 		"""
 		# 类型收窄：确保 config 不是 None
 		assert handler.config is not None
@@ -96,6 +112,7 @@ class NotificationKit:
 			)
 
 			logger.success(f'{handler.name} 消息发送成功！')
+			return True
 
 		except Exception as e:
 			logger.error(
@@ -103,6 +120,7 @@ class NotificationKit:
 				tag=handler.name,
 				exc_info=True,
 			)
+			return False
 
 	def _register_handlers(self) -> list[NotificationHandler]:
 		"""

@@ -165,8 +165,14 @@ class CheckinService:
 
 				# HTTP 请求失败
 				if response.status_code != 200:
-					logger.error(f'签到失败 - HTTP {response.status_code}', account_name)
-					return False, user_info
+					reason = self._describe_response_failure(response)
+					logger.error(f'签到失败 - HTTP {response.status_code}{reason}', account_name)
+
+					# 401 说明 session 已失效，需要把原因带回去，供 summary 区分凭据问题
+					failed_user_info = dict(user_info) if user_info else {}
+					failed_user_info['auth_failed'] = response.status_code == 401
+					failed_user_info.setdefault('error', f'签到失败：HTTP {response.status_code}{reason}')
+					return False, failed_user_info
 
 				# 处理响应结果
 				try:
@@ -286,6 +292,34 @@ class CheckinService:
 				except Exception:
 					pass
 
+	@staticmethod
+	def _describe_response_failure(response: Any) -> str:
+		"""
+		从响应体中提取失败原因，便于在日志与 summary 中直接看到服务端的说明
+
+		Args:
+		    response: HTTP 响应对象
+
+		Returns:
+		    str: 形如「（未登录且未提供 access token）」的说明，无法提取时返回空字符串
+		"""
+		try:
+			data = response.json()
+		except Exception:
+			data = None
+
+		if isinstance(data, dict):
+			for key in ('message', 'msg', 'error'):
+				reason = data.get(key)
+				if reason:
+					return f'（{str(reason)[:80]}）'
+
+		# 非 JSON 响应通常是 WAF 挑战页，只提示类型，避免把 HTML 刷进日志
+		if (getattr(response, 'text', None) or '').strip():
+			return '（响应不是 JSON，可能被 WAF 拦截）'
+
+		return ''
+
 	async def _get_user_info(
 		self,
 		client,
@@ -312,9 +346,11 @@ class CheckinService:
 
 			# HTTP 请求失败
 			if response.status_code != 200:
+				reason = self._describe_response_failure(response)
 				return {
 					'success': False,
-					'error': f'获取用户信息失败：HTTP {response.status_code}',
+					'auth_failed': response.status_code == 401,
+					'error': f'获取用户信息失败：HTTP {response.status_code}{reason}',
 				}
 
 			# JSON 解析失败

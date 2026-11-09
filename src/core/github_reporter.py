@@ -50,6 +50,10 @@ class GitHubReporter:
 			has_failed = len(failed_accounts) > 0
 			all_success = len(failed_accounts) == 0
 			all_failed = len(success_accounts) == 0
+			# 全部失败且每个账号都是 401 时，说明是凭据失效而非签到业务失败
+			credential_failed = False
+			if all_failed and failed_accounts:
+				credential_failed = all(acc.auth_failed for acc in failed_accounts)
 
 			# 构建 markdown 字符串
 			lines = []
@@ -63,6 +67,8 @@ class GitHubReporter:
 				lines.append('**✅ 所有账号全部签到成功！**')
 			elif has_success and has_failed:
 				lines.append('**⚠️ 部分账号签到成功**')
+			elif credential_failed:
+				lines.append('**🔑 所有账号登录凭据已失效（HTTP 401）**')
 			else:
 				lines.append('**❌ 所有账号签到失败**')
 
@@ -74,6 +80,12 @@ class GitHubReporter:
 			lines.append(f'- **成功比例**：{success_count}/{total_count}')
 			lines.append(f'- **失败比例**：{failed_count}/{total_count}')
 			lines.append('')
+
+			# 凭据失效时给出明确修复指引，避免只看到「签到失败」而无从下手
+			if credential_failed:
+				lines.append('> **提示**：服务端返回 401（未登录且未提供 access token），说明 secrets 中的 `session` cookie 已失效。')
+				lines.append('> 请重新登录 anyrouter.top 获取新的 `session` cookie 与 `New-Api-User`，更新 `ANYROUTER_ACCOUNT_*` secret 后手动运行一次工作流。')
+				lines.append('')
 
 			# 成功账号表格
 			if has_success:
@@ -107,7 +119,8 @@ class GitHubReporter:
 					lines.append('| 账号 | 状态 |')
 					lines.append('| :----- | :----- |')
 					for account in failed_accounts:
-						lines.append(f'|{account.name}|❌ 签到失败|')
+						status_text = '❌ 凭据失效' if account.auth_failed else '❌ 签到失败'
+						lines.append(f'|{account.name}|{status_text}|')
 
 			# 拼接成最终字符串
 			summary_content = '\n'.join(lines)

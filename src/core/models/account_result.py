@@ -22,3 +22,6 @@ class AccountResult:
 
 	# 错误信息，失败时才有
 	error: str | None = None
+
+	# 是否因登录凭据（session）失效导致失败，用于在 summary 中区分凭据问题与业务失败
+	auth_failed: bool = False

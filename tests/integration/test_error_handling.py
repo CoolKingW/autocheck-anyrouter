@@ -175,3 +175,35 @@ class TestErrorHandling:
 
 		assert exc_info.value.code == 1, '异常应该导致失败退出'
 		assert mock_push.await_count == 1, '异常也应该发送通知'
+
+	@pytest.mark.asyncio
+	async def test_auth_failure_marked_in_summary(self, accounts_env, tmp_path):
+		"""测试 401 时 summary 标记凭据失效，并在日志中带上服务端返回的原因"""
+		accounts_env([{'name': '401 账号', 'cookies': 'session=401', 'api_user': 'user_401'}])
+
+		app = Application()
+		app.balance_manager.balance_hash_file = tmp_path / 'hash_auth.txt'
+		summary_file = tmp_path / 'summary_auth.md'
+
+		unauthorized = {'success': False, 'message': '未登录且未提供 access token'}
+
+		async def get_handler(*args, **kwargs):
+			return MockHttpClient.build_response(status=401, json_data=unauthorized)
+
+		async def post_handler(*args, **kwargs):
+			return MockHttpClient.build_response(status=401, json_data=unauthorized)
+
+		with patch.dict(os.environ, {'GITHUB_STEP_SUMMARY': str(summary_file)}):
+			with ExitStack() as stack:
+				MockPlaywright.setup_success(stack)
+				MockHttpClient.setup(stack, get_handler, post_handler)
+
+				with pytest.raises(SystemExit) as exc_info:
+					await app.run()
+
+		assert exc_info.value.code == 1, '凭据失效时应该以失败退出'
+		assert summary_file.exists(), '应该生成 Step Summary'
+
+		content = summary_file.read_text(encoding='utf-8')
+		assert '所有账号登录凭据已失效' in content
+		assert 'ANYROUTER_ACCOUNT_' in content
