@@ -314,9 +314,12 @@ class CheckinService:
 				if reason:
 					return f'（{str(reason)[:80]}）'
 
-		# 非 JSON 响应通常是 WAF 挑战页，只提示类型，避免把 HTML 刷进日志
+			# JSON 能解析但没有说明字段（如空对象），不要误判成 WAF 拦截
+			return ''
+
+		# 解析失败通常是 WAF 挑战页，只提示类型，避免把 HTML 刷进日志
 		if (getattr(response, 'text', None) or '').strip():
-			return '（响应不是 JSON，可能被 WAF 拦截）'
+			return '（响应不是 JSON，可能是 WAF 挑战页）'
 
 		return ''
 
