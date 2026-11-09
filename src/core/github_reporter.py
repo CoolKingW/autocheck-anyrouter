@@ -83,8 +83,10 @@ class GitHubReporter:
 
 			# 凭据失效时给出明确修复指引，避免只看到「签到失败」而无从下手
 			if credential_failed:
-				lines.append('> **提示**：服务端返回 401（未登录且未提供 access token），说明 secrets 中的 `session` cookie 已失效。')
-				lines.append('> 请重新登录 anyrouter.top 获取新的 `session` cookie 与 `New-Api-User`，更新 `ANYROUTER_ACCOUNT_*` secret 后手动运行一次工作流。')
+				lines.append('> **提示**：服务端返回 401（未登录且未提供 access token）。')
+				lines.append('> 这说明 secrets 中的 `session` cookie 已失效。')
+				lines.append('> 请重新登录 anyrouter.top 获取新的 `session` cookie 与 `New-Api-User`，')
+				lines.append('> 更新对应的 `ANYROUTER_ACCOUNT_*` secret 后手动运行一次工作流。')
 				lines.append('')
 
 			# 成功账号表格
