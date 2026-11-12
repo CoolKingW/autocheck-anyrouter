@@ -1,0 +1,46 @@
+name: 临时探测代理（用完即删）
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 通过 SOCKS5 代理探测 agentrouter
+        env:
+          PROXY: ${{ secrets.PROBE_SOCKS }}
+        run: |
+          echo "===== 1. 出口 IP ====="
+          curl -sS --max-time 30 --proxy "$PROXY" https://api.ipify.org || echo "IP 探测失败"
+          echo
+          echo "===== 2. 直连基线（无代理）====="
+          for p in /api/status /api/user/self; do
+            code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 25 "https://agentrouter.org$p" || echo ERR)
+            echo "direct $p -> $code"
+          done
+
+          echo "===== 3. 代理 /api/status ====="
+          curl -sS --max-time 40 --proxy "$PROXY" -D /tmp/status.h -o /tmp/status.b \
+            https://agentrouter.org/api/status || echo "请求失败"
+          grep -iE '^(HTTP/|server:|content-type:|x-tengine-error:)' /tmp/status.h || true
+          echo "body_len=$(wc -c < /tmp/status.b 2>/dev/null || echo 0)"
+          head -c 260 /tmp/status.b 2>/dev/null || true
+          echo
+
+          echo "===== 4. 代理 /api/user/self ====="
+          curl -sS --max-time 40 --proxy "$PROXY" -D /tmp/self.h -o /tmp/self.b \
+            https://agentrouter.org/api/user/self || echo "请求失败"
+          grep -iE '^(HTTP/|content-type:|x-tengine-error:)' /tmp/self.h || true
+          echo "body_len=$(wc -c < /tmp/self.b 2>/dev/null || echo 0)"
+          head -c 260 /tmp/self.b 2>/dev/null || true
+          echo
+
+          echo "===== 5. 代理 /login 页面 ====="
+          curl -sS --max-time 40 --proxy "$PROXY" -D /tmp/login.h -o /tmp/login.b \
+            https://agentrouter.org/login || echo "请求失败"
+          grep -iE '^(HTTP/|content-type:)' /tmp/login.h || true
+          echo "body_len=$(wc -c < /tmp/login.b 2>/dev/null || echo 0)"
+          for m in nc-container 请进行验证 aliyun_waf_aa acw_sc__v2 Turnstile; do
+            if grep -q "$m" /tmp/login.b 2>/dev/null; then echo "marker $m = yes"; else echo "marker $m = no"; fi
+          done
