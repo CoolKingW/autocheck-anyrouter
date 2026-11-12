@@ -147,3 +147,22 @@ class TestRequestHeaders:
 
 		assert 'new-api-user' not in headers
 		assert headers['Origin'] == 'https://agentrouter.org'
+
+	def test_includes_bearer_token(self):
+		"""配了 access_token 时使用 Bearer 鉴权"""
+		service = CheckinService()
+		site = service._resolve_site_config({'cookies': 'session=1', 'api_user': '12345'})
+
+		headers = service._build_headers(site, '12345', 'abc123')
+
+		assert headers['Authorization'] == 'Bearer abc123'
+		assert headers['new-api-user'] == '12345'
+
+	def test_no_authorization_when_token_missing(self):
+		"""没配 access_token 时不发送 Authorization"""
+		service = CheckinService()
+		site = service._resolve_site_config({'cookies': 'session=1', 'api_user': '12345'})
+
+		headers = service._build_headers(site, '12345', None)
+
+		assert 'Authorization' not in headers

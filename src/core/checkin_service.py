@@ -153,8 +153,8 @@ class CheckinService:
 		"""api_user 为 auto 时表示不发送 new-api-user 头，直接用 session 自身身份"""
 		return str(api_user or '').strip().lower() == 'auto'
 
-	def _build_headers(self, site: SiteConfig, api_user: Any) -> dict[str, str]:
-		"""构造 API 请求头；api_user 为 auto 时省略 new-api-user"""
+	def _build_headers(self, site: SiteConfig, api_user: Any, access_token: Any = None) -> dict[str, str]:
+		"""构造 API 请求头；api_user 为 auto 时省略 new-api-user，access_token 存在时使用 Bearer 鉴权"""
 		headers = {
 			'User-Agent': ' '.join(self.Config.Browser.USER_AGENT_PARTS),
 			'Referer': site.console_url,
@@ -170,6 +170,9 @@ class CheckinService:
 
 		if not self._is_auto_user(api_user):
 			headers['new-api-user'] = str(api_user)
+
+		if access_token:
+			headers['Authorization'] = f'Bearer {access_token}'
 
 		return headers
 
@@ -203,6 +206,7 @@ class CheckinService:
 		# 解析账号配置
 		cookies_data = account_info.get('cookies', {})
 		api_user = account_info.get('api_user', '')
+		access_token = account_info.get('access_token') or account_info.get('token')
 
 		# 未找到 API 用户标识符
 		if not api_user:
@@ -216,10 +220,10 @@ class CheckinService:
 				tag='配置',
 				account_name=account_name,
 			)
-		# 解析用户 cookies
+		# 解析用户 cookies（使用 access_token 时 cookies 可不填）
 		user_cookies = self._parse_cookies(cookies_data)
-		if not user_cookies:
-			logger.error('配置格式无效', account_name)
+		if not user_cookies and not access_token:
+			logger.error('配置格式无效（缺少 cookies 或 access_token）', account_name)
 			return False, None
 
 		# 步骤1：获取 WAF cookies
@@ -235,7 +239,7 @@ class CheckinService:
 				all_cookies = {**waf_cookies, **user_cookies}
 				client.cookies.update(all_cookies)
 
-				headers = self._build_headers(site, api_user)
+				headers = self._build_headers(site, api_user, access_token)
 
 				# 获取用户信息
 				user_info = await self._get_user_info(
