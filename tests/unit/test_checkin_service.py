@@ -114,8 +114,8 @@ class TestSiteConfig:
 		assert CheckinService._build_playwright_proxy(None) is None
 		assert CheckinService._build_playwright_proxy('http://10.0.0.1') is None  # 缺少端口
 
-		assert CheckinService._build_playwright_proxy('http://user:p%40ss@10.0.0.1:1080') == {
-			'server': 'http://10.0.0.1:1080',
-			'username': 'user',
-			'password': 'p@ss',
-		}
+		parsed = CheckinService._build_playwright_proxy('http://user:p%40ss@10.0.0.1:1080')
+		assert parsed is not None
+		assert parsed['server'] == 'http://10.0.0.1:1080'
+		assert parsed['username'] == 'user'
+		assert parsed['password'] == 'p@ss'
