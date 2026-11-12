@@ -1,0 +1,81 @@
+name: 临时探测 cookie 影响（用完即删）
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 对比不同 cookie 组合的 WAF 结果
+        env:
+          PROXY: ${{ secrets.PROBE_PROXY }}
+        run: |
+          python -m pip install --quiet 'playwright==1.55.0' 'httpx[http2]==0.28.1'
+          python -m playwright install chromium --with-deps
+
+          python - <<'PY'
+          import asyncio
+          import os
+          from urllib.parse import unquote, urlparse
+
+          import httpx
+          from playwright.async_api import async_playwright
+
+          UA = (
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+              '(KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36'
+          )
+          BASE = 'https://agentrouter.org'
+          PROXY = os.environ['PROXY']
+          u = urlparse(PROXY)
+          pw_proxy = {
+              'server': f'{u.scheme}://{u.hostname}:{u.port}',
+              'username': unquote(u.username or ''),
+              'password': unquote(u.password or ''),
+          }
+          print('proxy server:', pw_proxy['server'])
+
+
+          async def main():
+              async with async_playwright() as p:
+                  browser = await p.chromium.launch(
+                      headless=True,
+                      args=['--no-sandbox', '--disable-dev-shm-usage'],
+                      proxy=pw_proxy,
+                  )
+                  ctx = await browser.new_context(user_agent=UA)
+                  page = await ctx.new_page()
+                  await page.goto(f'{BASE}/login', wait_until='networkidle', timeout=60000)
+                  cookies = await ctx.cookies()
+                  print('cookie names:', [(c['name'], len(c['value']), c['domain']) for c in cookies])
+                  jar = {c['name']: c['value'] for c in cookies}
+                  await browser.close()
+
+              combos = {
+                  'all cookies': jar,
+                  'only acw_tc': {k: v for k, v in jar.items() if k == 'acw_tc'},
+                  'no cookies': {},
+              }
+
+              async with httpx.AsyncClient(http2=True, timeout=30.0, proxy=PROXY) as client:
+                  for label, ck in combos.items():
+                      try:
+                          r = await client.get(
+                              f'{BASE}/api/user/self',
+                              headers={
+                                  'User-Agent': UA,
+                                  'Accept': 'application/json, text/plain, */*',
+                                  'Accept-Encoding': 'gzip, deflate, br, zstd',
+                              },
+                              cookies=ck,
+                          )
+                          body = r.text[:140].replace('\n', ' ')
+                          print(f'--- {label}: status={r.status_code} ct={r.headers.get("content-type", "")}')
+                          print(f'    body={body!r}')
+                      except Exception as e:
+                          print(f'--- {label}: EXCEPTION {type(e).__name__}: {e}')
+
+
+          asyncio.run(main())
+          PY
