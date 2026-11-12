@@ -105,6 +105,10 @@ jobs:
 - `name`（可选）：账号显示名称
 - `cookies`：登录后的 session cookie
 - `api_user`：API 用户标识
+- `base_url`（可选）：站点根地址，默认 `https://anyrouter.top`
+- `sign_in_path`（可选）：签到接口路径，默认 `/api/user/sign_in`；显式设为 `null` 表示该站点无签到接口（访问即签到）
+- `proxy`（可选）：出口代理，形如 `http://user:pass@host:port`，同一份代理会同时给 Playwright 与 httpx 使用
+- `required_waf_cookies`（可选）：必需的 WAF cookie 名称，默认 `["acw_tc", "cdn_sec_tc", "acw_sc__v2"]`
 
 支持两种配置方式，可以同时使用（账号会自动合并并去重）：
 
@@ -153,6 +157,29 @@ ANYROUTER_ACCOUNTS='[{"name": "Alice", "api_user": "12427", "cookies": { "sessio
 ANYROUTER_ACCOUNT_12427='{"cookies": { "session": "new_session" }}'  # ✅
 ANYROUTER_ACCOUNT_12427_ALICE='{"cookies": { "session": "new_session" }}'  # ✅ 可添加可读后缀
 12427_ANYROUTER_ACCOUNT_ALICE='{"cookies": { "session": "new_session" }}'  # ❌ 必须以 `ANYROUTER_ACCOUNT_` 开头
+
+#### 接入其他 new-api 站点（如 agentrouter.org）
+
+新增字段全部可选，原有的 AnyRouter 账号配置**无需任何改动**。以 agentrouter.org 为例（该站无独立签到接口，访问即签到，且对云机房 IP 会弹滑块，需要配代理）：
+
+```bash
+ANYROUTER_ACCOUNT_AGENT='{
+  "name": "Agent",
+  "api_user": "101",
+  "cookies": { "session": "..." },
+  "base_url": "https://agentrouter.org",
+  "sign_in_path": null,
+  "required_waf_cookies": ["acw_tc"],
+  "proxy": "http://user:pass@host:port"
+}'
+```
+
+要点：
+
+- `sign_in_path: null` 时跳过签到接口，改用「打开登录页 + 查询用户信息」视为签到，成功判定为 `/api/user/self` 返回 `success: true`
+- 代理必须支持 **HTTP** 方式（`http://host:port`）；Chromium 不支持带账号密码的 SOCKS5，只能用其 HTTP 端口
+- `required_waf_cookies` 按站点实际下发的 cookie 填，agentrouter 只发 `acw_tc`
+- 未配代理时，agentrouter 在 GitHub 托管 runner 上会被阿里云滑块拦住，日志会出现「响应不是 JSON，可能是 WAF 挑战页」
 ```
 
 ### 通知配置

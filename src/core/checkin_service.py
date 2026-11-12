@@ -1,12 +1,33 @@
 import json
 import os
+from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import unquote, urlparse
 
 import httpx
 from playwright.async_api import async_playwright
 
 from core.privacy_handler import PrivacyHandler
 from tools.logger import logger
+
+
+@dataclass
+class SiteConfig:
+	"""站点与网络配置（均可在账号 JSON 中覆盖，缺省时沿用 AnyRouter 默认值）"""
+
+	base_url: str
+	login_url: str
+	console_url: str
+	user_info_url: str
+
+	# 签到接口，None 表示该站点没有独立签到接口（访问即签到）
+	sign_in_url: str | None
+
+	# 出口代理，形如 http://user:pass@host:port
+	proxy: str | None = None
+
+	# 必需的 WAF cookie 名称
+	required_waf_cookies: list[str] = field(default_factory=list)
 
 
 class CheckinService:
@@ -19,11 +40,16 @@ class CheckinService:
 			"""URL 配置"""
 
 			BASE = 'https://anyrouter.top'
-			LOGIN = f'{BASE}/login'
+			LOGIN_PATH = '/login'
+			CONSOLE_PATH = '/console'
+			USER_INFO_PATH = '/api/user/self'
+			SIGN_IN_PATH = '/api/user/sign_in'
+
+			LOGIN = f'{BASE}{LOGIN_PATH}'
 			API_BASE = f'{BASE}/api'
-			USER_INFO = f'{API_BASE}/user/self'
-			CHECKIN = f'{API_BASE}/user/sign_in'
-			CONSOLE = f'{BASE}/console'
+			USER_INFO = f'{BASE}{USER_INFO_PATH}'
+			CHECKIN = f'{BASE}{SIGN_IN_PATH}'
+			CONSOLE = f'{BASE}{CONSOLE_PATH}'
 
 		class Env:
 			"""环境变量配置"""
@@ -66,6 +92,62 @@ class CheckinService:
 
 			COOKIE_NAMES = ['acw_tc', 'cdn_sec_tc', 'acw_sc__v2']
 
+	def _resolve_site_config(self, account_info: dict[str, Any]) -> SiteConfig:
+		"""
+		解析账号的站点与网络配置
+
+		支持的字段（均可缺省，旧配置无需修改）：
+		- base_url: 站点根地址，默认 https://anyrouter.top
+		- sign_in_path: 签到接口路径，显式传 null/空字符串表示无签到接口（访问即签到）
+		- proxy: 出口代理，形如 http://user:pass@host:port
+		- required_waf_cookies: 必需的 WAF cookie 名称，默认 acw_tc/cdn_sec_tc/acw_sc__v2
+		"""
+		base_url = (account_info.get('base_url') or self.Config.URLs.BASE).rstrip('/')
+
+		# 未配置时沿用默认签到接口；显式配置为空表示签到由访问触发
+		if 'sign_in_path' in account_info:
+			sign_in_path = account_info.get('sign_in_path')
+		else:
+			sign_in_path = self.Config.URLs.SIGN_IN_PATH
+
+		required_waf_cookies = account_info.get('required_waf_cookies') or self.Config.WAF.COOKIE_NAMES
+		if isinstance(required_waf_cookies, str):
+			required_waf_cookies = [required_waf_cookies]
+
+		return SiteConfig(
+			base_url=base_url,
+			login_url=f'{base_url}{self.Config.URLs.LOGIN_PATH}',
+			console_url=f'{base_url}{self.Config.URLs.CONSOLE_PATH}',
+			user_info_url=f'{base_url}{self.Config.URLs.USER_INFO_PATH}',
+			sign_in_url=f'{base_url}{sign_in_path}' if sign_in_path else None,
+			proxy=account_info.get('proxy') or None,
+			required_waf_cookies=list(required_waf_cookies),
+		)
+
+	@staticmethod
+	def _build_playwright_proxy(proxy: str | None) -> dict[str, str] | None:
+		"""
+		把代理 URL 转成 Playwright 需要的 proxy 配置
+
+		注意：Chromium 不支持 SOCKS5 认证，带账号密码的 SOCKS5 代理需要改用其 HTTP 端口
+		"""
+		if not proxy:
+			return None
+
+		parsed = urlparse(proxy)
+		if not parsed.hostname or not parsed.port:
+			return None
+
+		scheme = (parsed.scheme or 'http').lower()
+		config = {'server': f'{scheme}://{parsed.hostname}:{parsed.port}'}
+
+		if parsed.username:
+			config['username'] = unquote(parsed.username)
+		if parsed.password:
+			config['password'] = unquote(parsed.password)
+
+		return config
+
 	async def check_in_account(
 		self,
 		account_info: dict[str, Any],
@@ -85,6 +167,14 @@ class CheckinService:
 		account_name = privacy_handler.get_safe_account_name(account_info, account_index)
 		logger.processing(f'开始处理 {account_name}')
 
+		# 解析站点与网络配置（base_url / proxy / sign_in_path 均可缺省）
+		site = self._resolve_site_config(account_info)
+		logger.debug(
+			message=f'站点 {site.base_url}，代理 {"已启用" if site.proxy else "未启用"}',
+			tag='配置',
+			account_name=account_name,
+		)
+
 		# 解析账号配置
 		cookies_data = account_info.get('cookies', {})
 		api_user = account_info.get('api_user', '')
@@ -101,13 +191,13 @@ class CheckinService:
 			return False, None
 
 		# 步骤1：获取 WAF cookies
-		waf_cookies = await self._get_waf_cookies_with_playwright(account_name)
+		waf_cookies = await self._get_waf_cookies_with_playwright(account_name, site)
 		if not waf_cookies:
 			logger.error('无法获取 WAF cookies', account_name)
 			return False, None
 
-		# 步骤2：使用 httpx 进行 API 请求
-		async with httpx.AsyncClient(http2=True, timeout=30.0) as client:
+		# 步骤2：使用 httpx 进行 API 请求（代理与浏览器保持一致）
+		async with httpx.AsyncClient(http2=True, timeout=30.0, proxy=site.proxy) as client:
 			try:
 				# 合并 WAF cookies 和用户 cookies
 				all_cookies = {**waf_cookies, **user_cookies}
@@ -115,8 +205,8 @@ class CheckinService:
 
 				headers = {
 					'User-Agent': ' '.join(self.Config.Browser.USER_AGENT_PARTS),
-					'Referer': self.Config.URLs.CONSOLE,
-					'Origin': self.Config.URLs.BASE,
+					'Referer': site.console_url,
+					'Origin': site.base_url,
 					'new-api-user': api_user,
 					'Accept': 'application/json, text/plain, */*',
 					'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
@@ -130,6 +220,7 @@ class CheckinService:
 				# 获取用户信息
 				user_info = await self._get_user_info(
 					client=client,
+					url=site.user_info_url,
 					headers=headers,
 					privacy_handler=privacy_handler,
 				)
@@ -137,6 +228,18 @@ class CheckinService:
 					logger.info(user_info['display'], account_name)
 				elif user_info:
 					logger.warning(user_info.get('error', '未知错误'), account_name)
+
+				# 该站点没有独立签到接口，访问（查询用户信息）即完成签到
+				if site.sign_in_url is None:
+					if user_info and user_info.get('success'):
+						logger.success('访问即签到成功（该站点无签到接口）', account_name)
+						return True, user_info
+
+					error_msg = (user_info or {}).get('error', '未知错误')
+					logger.error(f'访问签到失败 - {error_msg}', account_name)
+					return False, user_info
+
+				sign_in_url = site.sign_in_url
 
 				logger.debug(
 					message='执行签到',
@@ -152,7 +255,7 @@ class CheckinService:
 				})  # fmt: skip
 
 				response = await client.post(
-					url=self.Config.URLs.CHECKIN,
+					url=sign_in_url,
 					headers=checkin_headers,
 					timeout=30,
 				)
@@ -204,17 +307,29 @@ class CheckinService:
 				)
 				return False, None
 
-	async def _get_waf_cookies_with_playwright(self, account_name: str) -> dict[str, str] | None:
+	async def _get_waf_cookies_with_playwright(
+		self,
+		account_name: str,
+		site: SiteConfig,
+	) -> dict[str, str] | None:
 		"""
 		使用 Playwright 获取 WAF cookies（无痕模式）
 
 		Args:
 		    account_name: 账号名称（用于日志）
+		    site: 站点与网络配置
 
 		Returns:
 		    dict[str, str] | None: WAF cookies 字典，失败返回 None
 		"""
 		logger.processing('正在启动浏览器获取 WAF cookies...', account_name)
+
+		proxy_config = self._build_playwright_proxy(site.proxy)
+		if proxy_config and proxy_config['server'].startswith('socks5') and proxy_config.get('username'):
+			logger.warning(
+				'Chromium 不支持 SOCKS5 认证，请改用同一代理的 HTTP 端口',
+				account_name,
+			)
 
 		browser = None
 		context = None
@@ -232,6 +347,7 @@ class CheckinService:
 				browser = await p.chromium.launch(
 					headless=is_ci,
 					args=self.Config.Browser.ARGS,
+					proxy=proxy_config,
 				)
 
 				context = await browser.new_context(
@@ -243,7 +359,7 @@ class CheckinService:
 
 				logger.processing('步骤 1: 访问登录页面获取初始 cookies...', account_name)
 
-				await page.goto(self.Config.URLs.LOGIN, wait_until='networkidle')
+				await page.goto(site.login_url, wait_until='networkidle')
 
 				try:
 					await page.wait_for_function('document.readyState === "complete"', timeout=5000)
@@ -252,16 +368,18 @@ class CheckinService:
 
 				cookies = await context.cookies()
 
+				# 收集所有已知的 WAF cookie，但只强制要求站点声明的必需项
+				wanted_cookies = set(self.Config.WAF.COOKIE_NAMES) | set(site.required_waf_cookies)
 				waf_cookies = {}
 				for cookie in cookies:
 					cookie_name = cookie.get('name')
 					cookie_value = cookie.get('value')
-					if cookie_name in self.Config.WAF.COOKIE_NAMES and cookie_value is not None:
+					if cookie_name in wanted_cookies and cookie_value is not None:
 						waf_cookies[cookie_name] = cookie_value
 
 				logger.info(f'步骤 1 后获得 {len(waf_cookies)} 个 WAF cookies', account_name)
 
-				missing_cookies = [c for c in self.Config.WAF.COOKIE_NAMES if c not in waf_cookies]
+				missing_cookies = [c for c in site.required_waf_cookies if c not in waf_cookies]
 
 				if missing_cookies:
 					logger.error(f'缺少 WAF cookies: {missing_cookies}', account_name)
@@ -326,6 +444,7 @@ class CheckinService:
 	async def _get_user_info(
 		self,
 		client,
+		url: str,
 		headers: dict[str, str],
 		privacy_handler: PrivacyHandler,
 	) -> dict[str, Any]:
@@ -334,6 +453,7 @@ class CheckinService:
 
 		Args:
 		    client: httpx 客户端
+		    url: 用户信息接口地址
 		    headers: 请求头
 		    privacy_handler: 隐私处理器
 
@@ -342,7 +462,7 @@ class CheckinService:
 		"""
 		try:
 			response = await client.get(
-				url=self.Config.URLs.USER_INFO,
+				url=url,
 				headers=headers,
 				timeout=30,
 			)
