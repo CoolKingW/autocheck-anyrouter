@@ -5,7 +5,7 @@ from typing import Any
 from urllib.parse import unquote, urlparse
 
 import httpx
-from playwright.async_api import ProxySettings, async_playwright
+from playwright.async_api import async_playwright
 
 from core.privacy_handler import PrivacyHandler
 from tools.logger import logger
@@ -125,7 +125,7 @@ class CheckinService:
 		)
 
 	@staticmethod
-	def _build_playwright_proxy(proxy: str | None) -> ProxySettings | None:
+	def _build_playwright_proxy(proxy: str | None) -> Any:
 		"""
 		把代理 URL 转成 Playwright 需要的 proxy 配置
 
@@ -139,7 +139,7 @@ class CheckinService:
 			return None
 
 		scheme = (parsed.scheme or 'http').lower()
-		config: ProxySettings = {'server': f'{scheme}://{parsed.hostname}:{parsed.port}'}
+		config: dict[str, Any] = {'server': f'{scheme}://{parsed.hostname}:{parsed.port}'}
 
 		if parsed.username:
 			config['username'] = unquote(parsed.username)
