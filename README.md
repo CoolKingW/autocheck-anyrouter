@@ -451,6 +451,16 @@ ANYROUTER_ACCOUNT_AGENT='{
 - 部分账号签到失败的时候，Action 整体依然会展示成功，具体的错误将在日志与通知中体现
 - 遇到 401 错误时请重新获取 cookies，理论 1 个月失效，详见 [anyrouter-check-in #6](https://github.com/millylee/anyrouter-check-in/issues/6)
 
+### 不想用代理？改用自托管 runner
+
+GitHub 托管 runner（ubuntu / macos / windows 全系）的出口都是云机房 IP，agentrouter.org 的阿里云 WAF 会对它们一律下发滑块验证页（实测四个 runner 池全部命中，连 `/v1/*` 也一样，注入浏览器 cookie 也无效）。如果你的机器有自己的家宽出口，可以改成自托管 runner，就不需要任何代理：
+
+1. 仓库 `Settings → Actions → Runners → New self-hosted runner`，按提示在一台常开机器上安装（推荐 Linux，Windows 建议用 WSL）
+2. 安装后确认机器已注册为 `self-hosted`
+3. 设置仓库变量将签到切到这台机器：`gh variable set CHECKIN_RUNNER --body self-hosted`
+
+改完后 `checkin.yml` 的 `runs-on` 会变成你的机器，出口即家宽 IP，agentrouter 与 anyrouter 共用一个 job，代理字段可以删掉。想切回云端只需删除该变量。
+
 ## 贡献指南
 
 欢迎提交 Issue 和 Pull Request！
