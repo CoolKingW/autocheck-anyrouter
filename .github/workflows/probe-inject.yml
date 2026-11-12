@@ -1,0 +1,34 @@
+name: 临时探测 cookie 注入（用完即删）
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 用浏览器 cookie 直连（无代理）
+        env:
+          COOKIE: ${{ secrets.PROBE_COOKIE }}
+        run: |
+          UA='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36'
+
+          echo "--- 1. self + 全部 cookie + new-api-user: 64913"
+          curl -sS -o /tmp/b1 -w '    status=%{http_code} ct=%{content_type} len=%{size_download}\n' \
+            --max-time 30 -H "Cookie: $COOKIE" -H "new-api-user: 64913" \
+            -H "User-Agent: $UA" -H 'Accept: application/json' \
+            "https://agentrouter.org/api/user/self" || echo "    请求失败"
+          echo "    head=$(head -c 220 /tmp/b1 2>/dev/null)"
+
+          echo "--- 2. self 仅 session（去掉 acw_tc）"
+          curl -sS -o /tmp/b2 -w '    status=%{http_code} ct=%{content_type} len=%{size_download}\n' \
+            --max-time 30 -H "Cookie: ${COOKIE%%;*}" -H "new-api-user: 64913" \
+            -H "User-Agent: $UA" -H 'Accept: application/json' \
+            "https://agentrouter.org/api/user/self" || echo "    请求失败"
+          echo "    head=$(head -c 220 /tmp/b2 2>/dev/null)"
+
+          echo "--- 3. login 页面"
+          curl -sS -o /tmp/b3 -w '    status=%{http_code} ct=%{content_type} len=%{size_download}\n' \
+            --max-time 30 -H "Cookie: $COOKIE" -H "User-Agent: $UA" \
+            "https://agentrouter.org/login" || echo "    请求失败"
+          echo "    head=$(head -c 160 /tmp/b3 2>/dev/null)"
