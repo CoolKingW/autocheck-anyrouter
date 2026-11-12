@@ -148,6 +148,31 @@ class CheckinService:
 
 		return config
 
+	@staticmethod
+	def _is_auto_user(api_user: Any) -> bool:
+		"""api_user 为 auto 时表示不发送 new-api-user 头，直接用 session 自身身份"""
+		return str(api_user or '').strip().lower() == 'auto'
+
+	def _build_headers(self, site: SiteConfig, api_user: Any) -> dict[str, str]:
+		"""构造 API 请求头；api_user 为 auto 时省略 new-api-user"""
+		headers = {
+			'User-Agent': ' '.join(self.Config.Browser.USER_AGENT_PARTS),
+			'Referer': site.console_url,
+			'Origin': site.base_url,
+			'Accept': 'application/json, text/plain, */*',
+			'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+			'Accept-Encoding': 'gzip, deflate, br, zstd',
+			'Connection': 'keep-alive',
+			'Sec-Fetch-Dest': 'empty',
+			'Sec-Fetch-Mode': 'cors',
+			'Sec-Fetch-Site': 'same-origin',
+		}
+
+		if not self._is_auto_user(api_user):
+			headers['new-api-user'] = str(api_user)
+
+		return headers
+
 	async def check_in_account(
 		self,
 		account_info: dict[str, Any],
@@ -184,6 +209,13 @@ class CheckinService:
 			logger.error('未找到 API 用户标识符', account_name)
 			return False, None
 
+		# api_user 为 auto 时直接用 session 自身身份
+		if self._is_auto_user(api_user):
+			logger.debug(
+				message='使用 session 身份（未发送 new-api-user 头）',
+				tag='配置',
+				account_name=account_name,
+			)
 		# 解析用户 cookies
 		user_cookies = self._parse_cookies(cookies_data)
 		if not user_cookies:
@@ -203,19 +235,7 @@ class CheckinService:
 				all_cookies = {**waf_cookies, **user_cookies}
 				client.cookies.update(all_cookies)
 
-				headers = {
-					'User-Agent': ' '.join(self.Config.Browser.USER_AGENT_PARTS),
-					'Referer': site.console_url,
-					'Origin': site.base_url,
-					'new-api-user': api_user,
-					'Accept': 'application/json, text/plain, */*',
-					'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-					'Accept-Encoding': 'gzip, deflate, br, zstd',
-					'Connection': 'keep-alive',
-					'Sec-Fetch-Dest': 'empty',
-					'Sec-Fetch-Mode': 'cors',
-					'Sec-Fetch-Site': 'same-origin',
-				}
+				headers = self._build_headers(site, api_user)
 
 				# 获取用户信息
 				user_info = await self._get_user_info(

@@ -104,7 +104,7 @@ jobs:
 
 - `name`（可选）：账号显示名称
 - `cookies`：登录后的 session cookie
-- `api_user`：API 用户标识
+- `api_user`：API 用户标识；填 `"auto"` 时不发送 `new-api-user` 头，直接用 session 自身身份
 - `base_url`（可选）：站点根地址，默认 `https://anyrouter.top`
 - `sign_in_path`（可选）：签到接口路径，默认 `/api/user/sign_in`；显式设为 `null` 表示该站点无签到接口（访问即签到）
 - `proxy`（可选）：出口代理，形如 `http://user:pass@host:port`，同一份代理会同时给 Playwright 与 httpx 使用

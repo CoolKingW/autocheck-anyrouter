@@ -119,3 +119,31 @@ class TestSiteConfig:
 		assert parsed['server'] == 'http://10.0.0.1:1080'
 		assert parsed['username'] == 'user'
 		assert parsed['password'] == 'p@ss'
+
+
+class TestRequestHeaders:
+	"""测试请求头构造（api_user 可为 auto）"""
+
+	def test_includes_new_api_user_header(self):
+		"""普通 api_user 会写入 new-api-user 头"""
+		service = CheckinService()
+		site = service._resolve_site_config({'cookies': 'session=1', 'api_user': '12345'})
+
+		headers = service._build_headers(site, '12345')
+
+		assert headers['new-api-user'] == '12345'
+		assert headers['Origin'] == 'https://anyrouter.top'
+
+	def test_omits_new_api_user_header_when_auto(self):
+		"""api_user 为 auto 时不发送 new-api-user，交给 session 自己识别用户"""
+		service = CheckinService()
+		site = service._resolve_site_config({
+			'cookies': 'session=1',
+			'api_user': 'auto',
+			'base_url': 'https://agentrouter.org',
+		})  # fmt: skip
+
+		headers = service._build_headers(site, 'auto')
+
+		assert 'new-api-user' not in headers
+		assert headers['Origin'] == 'https://agentrouter.org'
