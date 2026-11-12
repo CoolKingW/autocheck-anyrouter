@@ -500,13 +500,14 @@ class CheckinService:
 					'error': f'获取用户信息失败：HTTP {response.status_code}{reason}',
 				}
 
-			# JSON 解析失败
+			# JSON 解析失败（通常是 WAF 挑战页）
 			try:
 				data = response.json()
 			except json.JSONDecodeError:
+				reason = self._describe_response_failure(response)
 				return {
 					'success': False,
-					'error': '获取用户信息失败：无效的 JSON 响应',
+					'error': f'获取用户信息失败：无效的 JSON 响应{reason}',
 				}
 
 			# API 响应失败
