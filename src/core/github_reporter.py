@@ -99,11 +99,13 @@ class GitHubReporter:
 					for account in success_accounts:
 						lines.append(f'|{account.name}|{account.quota}|{account.used}|')
 				else:
-					# 脱敏模式：只显示账号和状态
-					lines.append('| 账号 | 状态 |')
-					lines.append('| :----- | :---- |')
+					# 脱敏模式：只显示账号和状态，并说明余额是否发生变化（不暴露具体数值）
+					lines.append('| 账号 | 状态 | 余额变化 |')
+					lines.append('| :----- | :---- | :----- |')
 					for account in success_accounts:
-						lines.append(f'|{account.name}|✅ 签到成功|')
+						lines.append(
+							f'|{account.name}|✅ 签到成功|{self._describe_balance_change(account.balance_changed)}|'
+						)  # fmt: skip
 				lines.append('')
 
 			# 失败账号表格
@@ -136,3 +138,24 @@ class GitHubReporter:
 
 		except Exception as e:
 			logger.warning(f'生成 GitHub Actions Step Summary 失败：{e}', tag='Summary')
+
+	@staticmethod
+	def _describe_balance_change(balance_changed: bool | None) -> str:
+		"""
+		描述余额是否发生变化
+
+		脱敏模式只说明变化方向，不输出具体数值，因此可以安全地放在公开仓库的 summary 里，
+		也能直接用来验证「登录签到是否真的到账」。
+
+		Args:
+		    balance_changed: True 表示有变化，False 表示未变化，None 表示无法判断
+
+		Returns:
+		    str: 可直接放进表格的文案
+		"""
+		if balance_changed is True:
+			return '🔄 有变化'
+		if balance_changed is False:
+			return '— 未变化'
+
+		return '? 无法判断'
