@@ -19,6 +19,7 @@ class SiteConfig:
 	login_url: str
 	console_url: str
 	user_info_url: str
+	login_api_url: str
 
 	# 签到接口，None 表示该站点没有独立签到接口（访问即签到）
 	sign_in_url: str | None
@@ -43,6 +44,7 @@ class CheckinService:
 			LOGIN_PATH = '/login'
 			CONSOLE_PATH = '/console'
 			USER_INFO_PATH = '/api/user/self'
+			LOGIN_API_PATH = '/api/user/login'
 			SIGN_IN_PATH = '/api/user/sign_in'
 
 			LOGIN = f'{BASE}{LOGIN_PATH}'
@@ -101,6 +103,7 @@ class CheckinService:
 		- sign_in_path: 签到接口路径，显式传 null/空字符串表示无签到接口（访问即签到）
 		- proxy: 出口代理，形如 http://user:pass@host:port
 		- required_waf_cookies: 必需的 WAF cookie 名称，默认 acw_tc/cdn_sec_tc/acw_sc__v2
+		- username/password: 站点要求「重新登录才到账」时使用，配置后每次运行都会真实登录一次
 		"""
 		base_url = (account_info.get('base_url') or self.Config.URLs.BASE).rstrip('/')
 
@@ -119,6 +122,7 @@ class CheckinService:
 			login_url=f'{base_url}{self.Config.URLs.LOGIN_PATH}',
 			console_url=f'{base_url}{self.Config.URLs.CONSOLE_PATH}',
 			user_info_url=f'{base_url}{self.Config.URLs.USER_INFO_PATH}',
+			login_api_url=f'{base_url}{self.Config.URLs.LOGIN_API_PATH}',
 			sign_in_url=f'{base_url}{sign_in_path}' if sign_in_path else None,
 			proxy=account_info.get('proxy') or None,
 			required_waf_cookies=list(required_waf_cookies),
@@ -207,6 +211,8 @@ class CheckinService:
 		cookies_data = account_info.get('cookies', {})
 		api_user = account_info.get('api_user', '')
 		access_token = account_info.get('access_token') or account_info.get('token')
+		login_username = account_info.get('username') or account_info.get('email')
+		login_password = account_info.get('password')
 
 		# 未找到 API 用户标识符
 		if not api_user:
@@ -220,10 +226,11 @@ class CheckinService:
 				tag='配置',
 				account_name=account_name,
 			)
-		# 解析用户 cookies（使用 access_token 时 cookies 可不填）
+		# 解析用户 cookies（使用 access_token 或账号密码登录时 cookies 可不填）
 		user_cookies = self._parse_cookies(cookies_data)
-		if not user_cookies and not access_token:
-			logger.error('配置格式无效（缺少 cookies 或 access_token）', account_name)
+		login_enabled = bool(login_username and login_password)
+		if not user_cookies and not access_token and not login_enabled:
+			logger.error('配置格式无效（缺少 cookies / access_token / username+password）', account_name)
 			return False, None
 
 		# 步骤1：获取 WAF cookies
@@ -241,6 +248,34 @@ class CheckinService:
 
 				headers = self._build_headers(site, api_user, access_token)
 
+				# 站点要求在登录流程中才发放奖励时，先执行一次真实登录
+				if login_enabled:
+					login_result = await self._login_with_password(
+						client=client,
+						site=site,
+						headers=headers,
+						username=str(login_username),
+						password=str(login_password),
+					)
+					if not login_result.get('success'):
+						logger.error(login_result.get('error', '登录失败'), account_name)
+						return False, login_result
+
+					logger.success('重新登录成功，签到奖励已触发', account_name)
+
+					user_info = await self._get_user_info(
+						client=client,
+						url=site.user_info_url,
+						headers=headers,
+						privacy_handler=privacy_handler,
+					)
+					if user_info and user_info.get('success'):
+						logger.info(user_info['display'], account_name)
+					else:
+						logger.warning((user_info or {}).get('error', '登录后获取用户信息失败'), account_name)
+
+					return True, user_info or {'success': True}
+
 				# 获取用户信息
 				user_info = await self._get_user_info(
 					client=client,
@@ -256,7 +291,7 @@ class CheckinService:
 				# 该站点没有独立签到接口，访问（查询用户信息）即完成签到
 				if site.sign_in_url is None:
 					if user_info and user_info.get('success'):
-						logger.success('访问即签到成功（该站点无签到接口）', account_name)
+						logger.success('查询成功（未配置 username/password，余额不会到账）', account_name)
 						return True, user_info
 
 					error_msg = (user_info or {}).get('error', '未知错误')
@@ -464,6 +499,70 @@ class CheckinService:
 			return '（响应不是 JSON，可能是 WAF 挑战页）'
 
 		return ''
+
+	async def _login_with_password(
+		self,
+		client,
+		site: SiteConfig,
+		headers: dict[str, str],
+		username: str,
+		password: str,
+	) -> dict[str, Any]:
+		"""
+		用账号密码执行一次真实登录
+
+		new-api 的「登录即签到」只在登录流程里发放奖励，单纯查询接口不会到账，
+		因此配置了 username + password 的账号每次运行都重新登录一次。
+
+		Args:
+		    client: httpx 客户端（登录成功后 session cookie 会自动保存在客户端）
+		    site: 站点与网络配置
+		    headers: 通用请求头
+		    username: 登录用户名或邮箱
+		    password: 登录密码
+
+		Returns:
+		    dict[str, Any]: {'success': True} 或 {'success': False, 'error': ...}
+		"""
+		login_headers = headers.copy()
+		login_headers.pop('new-api-user', None)
+		login_headers.pop('Authorization', None)
+		login_headers.update({
+			'Content-Type': 'application/json',
+			'X-Requested-With': 'XMLHttpRequest',
+			'Referer': site.login_url,
+		})  # fmt: skip
+
+		try:
+			response = await client.post(
+				url=site.login_api_url,
+				headers=login_headers,
+				json={'username': username, 'password': password},
+				timeout=30,
+			)
+		except httpx.TimeoutException:
+			return {'success': False, 'error': '登录失败：请求超时'}
+		except httpx.RequestError:
+			return {'success': False, 'error': '登录失败：网络错误'}
+
+		if response.status_code != 200:
+			reason = self._describe_response_failure(response)
+			return {'success': False, 'error': f'登录失败：HTTP {response.status_code}{reason}'}
+
+		try:
+			data = response.json()
+		except json.JSONDecodeError:
+			reason = self._describe_response_failure(response)
+			return {'success': False, 'error': f'登录失败：无效的 JSON 响应{reason}'}
+
+		if isinstance(data, dict) and data.get('success'):
+			return {'success': True}
+
+		message = ''
+		if isinstance(data, dict):
+			message = str(data.get('message') or data.get('msg') or '')
+
+		return {'success': False, 'error': f'登录失败：{message or "账号或密码错误"}'}
 
 	async def _get_user_info(
 		self,

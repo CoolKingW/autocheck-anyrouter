@@ -106,8 +106,10 @@ jobs:
 - `cookies`：登录后的 session cookie
 - `api_user`：API 用户标识；填 `"auto"` 时不发送 `new-api-user` 头，直接用 session 自身身份
 - `access_token`（可选）：访问令牌，填入后以 `Authorization: Bearer <token>` 鉴权；有它时 `cookies` 可不填
+- `username` / `password`（可选）：站点账号密码。部分站点（如 agentrouter.org）**只在登录流程中发放签到奖励**，单纯查询接口余额不会到账；配置这两项后每次运行都会先 `POST /api/user/login` 真实登录一次，再查询余额
+- `email`（可选）：`username` 的别名，可用邮箱登录
 - `base_url`（可选）：站点根地址，默认 `https://anyrouter.top`
-- `sign_in_path`（可选）：签到接口路径，默认 `/api/user/sign_in`；显式设为 `null` 表示该站点无签到接口（访问即签到）
+- `sign_in_path`（可选）：签到接口路径，默认 `/api/user/sign_in`；显式设为 `null` 表示该站点无独立签到接口（此时若未配置 `username`/`password`，只会查询余额并提示「未配置登录凭据，余额不会到账」）
 - `proxy`（可选）：出口代理，形如 `http://user:pass@host:port`，同一份代理会同时给 Playwright 与 httpx 使用
 - `required_waf_cookies`（可选）：必需的 WAF cookie 名称，默认 `["acw_tc", "cdn_sec_tc", "acw_sc__v2"]`
 

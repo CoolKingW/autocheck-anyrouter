@@ -378,10 +378,11 @@ class Application:
 				logger.error(f'账号 {i + 1} 配置格式不正确，已忽略')
 				continue
 
-			# 缺少必需字段：cookies 与 access_token 至少有一个，且必须有 api_user
+			# 缺少必需字段：cookies / access_token / username+password 至少有一个，且必须有 api_user
 			has_cookie = bool(account.get('cookies'))
 			has_token = bool(account.get('access_token') or account.get('token'))
-			if (not has_cookie and not has_token) or not account.get('api_user'):
+			has_login = bool((account.get('username') or account.get('email')) and account.get('password'))
+			if (not has_cookie and not has_token and not has_login) or not account.get('api_user'):
 				account_name = account.get('name', f'账号 {i + 1}')
 				logger.error(f'"{account_name}" 缺少必需字段 (cookies/access_token, api_user)，已忽略')
 				continue
