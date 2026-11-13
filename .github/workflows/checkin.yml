@@ -6,9 +6,7 @@ on:
 
 jobs:
   checkin:
-    # 默认跑在 GitHub 托管 runner；把仓库变量 CHECKIN_RUNNER 设为 self-hosted 即改由自托管机器执行
-    # （自托管机器的家宽出口不会触发 agentrouter 的阿里云滑块，因此不需要任何代理）
-    runs-on: ${{ vars.CHECKIN_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     environment: production
     env:
       PYTHONIOENCODING: utf-8
