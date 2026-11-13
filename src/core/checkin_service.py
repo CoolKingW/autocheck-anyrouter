@@ -261,7 +261,8 @@ class CheckinService:
 						logger.error(login_result.get('error', '登录失败'), account_name)
 						return False, login_result
 
-					logger.success('重新登录成功，签到奖励已触发', account_name)
+					login_message = str(login_result.get('message') or '').strip()
+					logger.success(f'重新登录成功：{login_message}' if login_message else '重新登录成功', account_name)
 
 					user_info = await self._get_user_info(
 						client=client,
@@ -556,7 +557,7 @@ class CheckinService:
 			return {'success': False, 'error': f'登录失败：无效的 JSON 响应{reason}'}
 
 		if isinstance(data, dict) and data.get('success'):
-			return {'success': True}
+			return {'success': True, 'message': str(data.get('message') or data.get('msg') or '').strip()}
 
 		message = ''
 		if isinstance(data, dict):
